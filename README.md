@@ -1,6 +1,6 @@
 # Spurious correlation at the concept level
 
-*Paper*: Explore Spurious Correlations at the Concept Level in Language Models
+Paper: Explore Spurious Correlations at the Concept Level in Language Models
 for Text Classification (ACL 2024)
 
 Link: https://arxiv.org/pdf/2311.08648
