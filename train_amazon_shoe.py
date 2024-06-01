@@ -7,17 +7,28 @@ import os
 import random
 import torch
 from collections import Counter
-from datasets import load_dataset
 from random import sample
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 from transformers import DistilBertModel, AutoTokenizer, AutoModelForSequenceClassification, TrainingArguments, \
     EvalPrediction, Trainer
 
-from extract_important_token import TrainValidDataset
-
 random.seed(10)
 MODEL = "distilbert-base-uncased"
+
+
+class TrainValidDataset(torch.utils.data.Dataset):
+    def __init__(self, encodings, labels):
+        self.encodings = encodings
+        self.labels = labels
+
+    def __getitem__(self, idx):
+        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+        item['labels'] = torch.tensor(self.labels[idx])
+        return item
+
+    def __len__(self):
+        return len(self.labels)
 
 
 def high_association_word(text_list, concept_text_list):
@@ -229,12 +240,6 @@ def prepare_cf_test_dataset(dataset_name, tokenizer):
     return tokenize_cf_dataset(test_text_changed_ori, test_text_changed_burberry, test_text_changed_chanel,
                                test_text_changed_dior, test_text_changed_gucci, test_text_changed_prada,
                                tokenizer, test_label_changed, test_label_changed)
-    # return tokenize_cf_dataset(test_text_changed_ori, pos_test_text_burberry, pos_test_text_chanel,
-    #                            pos_test_text_dior, pos_test_text_gucci, pos_test_text_prada,
-    #                            tokenizer, test_label_changed, pos_test_label_changed)
-    # return tokenize_cf_dataset(test_text_changed_ori, neg_test_text_burberry, neg_test_text_chanel,
-    #                            neg_test_text_dior, neg_test_text_gucci, neg_test_text_prada,
-    #                            tokenizer, test_label_changed, neg_test_label_changed)
 
 
 def train_test_split_tokenize(text_list, label_list, tokenizer, output_dir, test_size=10000):
@@ -324,93 +329,11 @@ def evaluate_dataset(model, eval_dataset, device):
     # attention_weights = torch.cat(attention_weights, dim=0)
     logits = torch.cat(logits, dim=0)
 
-    # dump attention weights in numpy
-    # with open(os.path.join(training_args.output_dir, "cls_attention_weights_categorical.npy"), "wb") as f:
-    #     np.save(f, attention_weights.detach().cpu().numpy())
-    # with open(os.path.join(training_args.output_dir, "predictions_categorical.npy"), "wb") as f:
-    #     np.save(f, logits.detach().cpu().numpy())
-
     # print("attention weights size: ", attention_weights.size())
     print("logits size", logits.size())
     preds = np.argmax(logits.detach().cpu().numpy(), axis=1)
     print("acc", (preds == eval_dataset.labels).mean())
     return preds, eval_dataset.labels
-
-
-def cf_shoe_training():
-    datasets = load_dataset("juliensimon/amazon-shoe-reviews")
-    # output_dir = 'amazon_shoe_classification/cf_Burberry_Chanel_Dior_pos_v2'
-    output_dir = 'amazon_shoe_classification/ori'
-    dataset_name = "/fs/clip-emoji/tonyzhou/concept_spurious_correlation/data/amazon_shoe_review_v2/amazon_shoe_review_"
-
-    train_dataset = datasets['train']
-    text_list = train_dataset['text']
-    label_list = train_dataset['labels']
-
-    test_dataset = datasets['test']
-    test_text = test_dataset['text']
-    test_label = test_dataset['labels']
-    print("Test dataset length")
-    print(len(test_text))
-
-    tokenizer = AutoTokenizer.from_pretrained(MODEL)
-
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    print(device)
-    train_text, train_label, valid_text, valid_label, train_dataset, val_dataset = train_test_split_tokenize(text_list,
-                                                                                                             label_list,
-                                                                                                             tokenizer,
-                                                                                                             output_dir)
-    cf_train_dataset, cf_train_label = prepare_cf_train_dataset(dataset_name, tokenizer, train_text, train_label)
-    # model, training_args = train_model(train_label, train_dataset, val_dataset, output_dir, device)
-    # model, training_args = train_model(cf_train_label, cf_train_dataset, val_dataset, output_dir, device)
-
-    test_encodings = tokenizer(test_text, truncation=True, padding=True)
-    test_dataset = TrainValidDataset(test_encodings, test_label)
-
-    model = AutoModelForSequenceClassification.from_pretrained(output_dir).to(device)
-    inference_pos_neg(test_text, test_label, model, tokenizer, device)
-    # evaluate_dataset(model, train_dataset, device)
-    # evaluate_dataset(model, cf_train_dataset, device)
-    # evaluate_dataset(model, test_dataset, device)
-
-    test_changed_dataset, test_changed_burberry, test_changed_chanel, \
-    test_changed_dior, test_changed_gucci, test_changed_prada = prepare_cf_test_dataset(dataset_name, tokenizer)
-
-    sampled_labels = test_changed_dataset.labels
-    print("original sampled test acc: ")
-    ori_preds, _ = evaluate_dataset(model, test_changed_dataset, device)
-    print("burberry sampled test acc: ")
-    burberry_preds, _ = evaluate_dataset(model, test_changed_burberry, device)
-    print("chanel sampled test acc: ")
-    chanel_preds, _ = evaluate_dataset(model, test_changed_chanel, device)
-    print("dior sampled test acc: ")
-    dior_preds, _ = evaluate_dataset(model, test_changed_dior, device)
-    print("gucci sampled test acc: ")
-    guccis_preds, _ = evaluate_dataset(model, test_changed_gucci, device)
-    print("prada sampled test acc: ")
-    prada_preds, _ = evaluate_dataset(model, test_changed_prada, device)
-
-    # with open(dataset_name + 'test_text_changed_ori.txt') as f:
-    #     test_text_changed_ori = [line.rstrip() for line in f]
-    # with open(dataset_name + 'test_text_changed_Burberry_cf.txt') as f:
-    #     test_text_changed_burberry = [line.rstrip() for line in f]
-    # index = 0
-    # wrong_predict = 0
-    # for ori_pred, burberry_pred in zip(ori_preds, burberry_preds):
-    #     sampled_label = sampled_labels[index]
-    #     text_ori = test_text_changed_ori[index]
-    #     text_burberry = test_text_changed_burberry[index]
-    #     if ori_pred == sampled_label and burberry_pred != sampled_label:
-    #         print(index)
-    #         print(sampled_label)
-    #         print(burberry_pred)
-    #         print(text_ori)
-    #         print(text_burberry)
-    #         print("=" * 10)
-    #         wrong_predict += 1
-    #     index += 1
-    # print(wrong_predict)
 
 
 def inference_pos_neg(test_text, test_label, model, tokenizer, device, dataset="amazon-shoe-reviews"):
@@ -536,10 +459,7 @@ def balance_concept_text_amazon_shoe(dataset, text_list, label_list, method, con
         review_3 = sample(review_3, min_length)
         review_4 = sample(review_4, min_length)
     elif method == "upsample":
-        if explicit:
-            data_file = f"/fs/clip-emoji/tonyzhou/concept_spurious_correlation/data/chatgpt_concepts_cf_{dataset}_{concept}_explicit.jsonl"
-        else:
-            data_file = f"/fs/clip-emoji/tonyzhou/concept_spurious_correlation/data/chatgpt_concepts_cf_{dataset}_{concept}_implicit.jsonl"
+        data_file = f"data/chatgpt_concepts_cf_{dataset}_{concept}_explicit.jsonl"
         max_length = max(len(review_0), len(review_1), len(review_2), len(review_3), len(review_4))
         print(max_length)
         sup_review_0, sup_review_1, sup_review_2, sup_review_3, sup_review_4 = [], [], [], [], []
@@ -605,10 +525,7 @@ def balance_concept_text_imdb(dataset, text_list, label_list, method, concept, e
         review_0 = sample(review_0, min_length)
         review_1 = sample(review_1, min_length)
     elif method == "upsample":
-        if explicit:
-            data_file = f"/fs/clip-emoji/tonyzhou/concept_spurious_correlation/data/chatgpt_concepts_cf_{dataset}_{concept}_explicit.jsonl"
-        else:
-            data_file = f"/fs/clip-emoji/tonyzhou/concept_spurious_correlation/data/chatgpt_concepts_cf_{dataset}_{concept}_implicit.jsonl"
+        data_file = f"data/chatgpt_concepts_cf_{dataset}_{concept}_explicit.jsonl"
         max_length = max(len(review_0), len(review_1))
         print(max_length)
         sup_review_0, sup_review_1 = [], []
@@ -660,7 +577,7 @@ def train_original_dataset(dataset):
         os.makedirs(output_dir)
     text_list = []
     label_list = []
-    with open(f"/fs/clip-emoji/tonyzhou/concept_spurious_correlation/data/chatgpt_concepts_{dataset}_exp.jsonl",
+    with open(f"data/chatgpt_concepts_{dataset}_exp.jsonl",
               'r') as inf:
         for line in inf:
             data = json.loads(line.strip())
@@ -745,8 +662,7 @@ def train_specific_concept(dataset, concept, method, explicit):
     total_text = []
     total_label = []
 
-    with open(f"/fs/clip-emoji/tonyzhou/concept_spurious_correlation/data/chatgpt_concepts_{dataset}_exp.jsonl",
-              'r') as inf:
+    with open(f"data/chatgpt_concepts_{dataset}_exp.jsonl", 'r') as inf:
         for line in inf:
             data = json.loads(line.strip())
             text_concepts = data['concepts'].lower().split(',')
@@ -849,15 +765,6 @@ def train_specific_concept(dataset, concept, method, explicit):
     print("test no concept number: ")
     print(len(no_concept_test_text))
 
-    # for i, l in zip(no_concept_train_text, no_concept_train_label):
-    #     if "food" not in i and len(i.split()) < 30 and l == 0:
-    #         print(i)
-    #         print("=" * 50)
-
-    # for i in concept_test_text:
-    #     if "food" not in i:
-    #         print(i)
-
     if method == "downsample" or method == "upsample":
         print("balanced training concept dataset: ")
         if dataset == "amazon-shoe-reviews" or dataset == "cebab":
@@ -906,48 +813,6 @@ def train_specific_concept(dataset, concept, method, explicit):
     print("Test on reviews with concepts: ")
     inference_pos_neg(concept_test_text, concept_test_label, model, tokenizer, device, dataset)
 
-    # if method == "original" and dataset == "amazon-shoe-reviews":
-    #     base_model = DistilBertModel(model.config)
-    #     # Copy the weights from your fine-tuned model to the base model
-    #     # Here we avoid copying the weights of the classification head
-    #     base_model.load_state_dict({k: v for k, v in model.state_dict().items() if 'classifier' not in k},
-    #                                strict=False)
-    #     # Ensure CUDA is available
-    #     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    #     # Move the model to the appropriate device
-    #     base_model = base_model.to(device)
-    #
-    #     concept_words_size = ['9m', 'small', 'c/d', 'sizing', '105', 'large', 'us', '95', '8w', 'chart']
-    #     concept_words_color = ['royal', 'camel', 'muted', 'champagne', 'color', 'taupe', 'maroon', 'teal', 'greenish',
-    #                            'white']
-    #     concept_words_style = ['stylish', 'vibe', 'comfort', 'swedish', 'look', 'trousers', '55', 'model',
-    #                            'yearround', 'frumpy']
-    #
-    #     concept_size_emb = []
-    #     concept_color_emb = []
-    #     concept_style_emb = []
-    #
-    #     for ass_token in concept_words_size:
-    #         sent = ass_token
-    #         sentence_embeddings = get_average_sentence_embedding(sent, tokenizer, base_model, word=ass_token)
-    #         print(ass_token)
-    #         concept_size_emb.append(sentence_embeddings.cpu())
-    #     torch.save(concept_size_emb, 'data/shoe_concept_size_emb.pth')
-    #
-    #     for ass_token in concept_words_color:
-    #         sent = ass_token
-    #         sentence_embeddings = get_average_sentence_embedding(sent, tokenizer, base_model, word=ass_token)
-    #         print(ass_token)
-    #         concept_color_emb.append(sentence_embeddings.cpu())
-    #     torch.save(concept_color_emb, 'data/shoe_concept_color_emb.pth')
-    #
-    #     for ass_token in concept_words_style:
-    #         sent = ass_token
-    #         sentence_embeddings = get_average_sentence_embedding(sent, tokenizer, base_model, word=ass_token)
-    #         print(ass_token)
-    #         concept_style_emb.append(sentence_embeddings.cpu())
-    #     torch.save(concept_style_emb, 'data/shoe_concept_style_emb.pth')
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -955,10 +820,4 @@ if __name__ == "__main__":
     parser.add_argument('--concept', type=str, default="size")
     parser.add_argument('--method', type=str, default="downsample")
     args, _ = parser.parse_known_args()
-    # cf_shoe_training()
-    # train_specific_concept(concept="size", method="original", explicit=True)
-    # train_specific_concept(concept="color", method="biased", explicit=True)
-    # train_specific_concept(dataset='imdb', concept="acting", method="biased", explicit=True)
-    # train_specific_concept(dataset='imdb', concept="comedy", method="biased", explicit=True)
     train_specific_concept(dataset=args.dataset, concept=args.concept, method=args.method, explicit=True)
-    # train_original_dataset(dataset='imdb')
